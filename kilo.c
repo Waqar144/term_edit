@@ -11,6 +11,17 @@
 
 #define CTRL_KEY(key) (key & 0x1f)
 
+enum KEYS {
+	KEY_UP = 500,
+	KEY_DOWN, 
+	KEY_LEFT,
+	KEY_RIGHT,
+	PAGE_UP,
+	PAGE_DOWN,
+	HOME_KEY,
+	END_KEY
+};
+
 struct editor_config {
 	int cursorX;
 	int cursorY;
@@ -138,48 +149,101 @@ void editor_refresh_screen() {
 	buffer_free(&b);
 }
 
-char editor_read_key() {
+int editor_read_key() {
 	int nread;
 	char c;
 	while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
 		if (nread == -1 && errno != EAGAIN)
 			die("read()");
 	}
-	return c;
+
+	if (c == '\x1b') {
+		char seq[3];
+		if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
+		if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
+
+		if (seq[0] == '[') {
+			if (seq[1] >= '0' && seq[1] <= '9') {
+				if (read(STDIN_FILENO, &seq[2], 1) != 1) return '\x1b';
+				if (seq[2] == '~') {
+					switch(seq[1]) {
+						case '1': return HOME_KEY;
+						case '4': return END_KEY;
+						case '5': return PAGE_UP;
+						case '6': return PAGE_DOWN;
+						case '7': return HOME_KEY;
+						case '8': return END_KEY;
+					}
+				}
+			}
+			switch (seq[1])
+			{
+				case 'A' : return KEY_UP;
+				case 'B' : return KEY_DOWN;
+				case 'C' : return KEY_RIGHT;
+				case 'D' : return KEY_LEFT;
+				case 'H' : return HOME_KEY;
+				case 'F' : return END_KEY;
+			}
+		} else if (seq[0] == '0') {
+			switch (seq[1]) {
+				case 'H' : return HOME_KEY;
+				case 'F' : return END_KEY;
+			}
+		}
+		return '\x1b';
+	} else {
+		return c;
+	}
 }
 
-void editor_move_cursor(char key) {
+void editor_move_cursor(int key) {
 	switch (key)
 	{
-	case 'h': 
-		e.cursorX--;
+	case KEY_LEFT: 
+		if (e.cursorX != 0) e.cursorX--;
 		break;
-	case 'l': 
-		e.cursorX++;
+	case KEY_RIGHT: 
+		if (e.cursorX != (e.cols - 1)) e.cursorX++;
 		break;
-	case 'j': 
-		e.cursorY++;
+	case KEY_DOWN: 
+		if(e.cursorY != (e.rows - 1)) e.cursorY++;
 		break;
-	case 'k': 
-		e.cursorY--;
+	case KEY_UP: 
+		if(e.cursorY != 0) e.cursorY--;
 		break;
 	}
 }
 
 void editor_process_keypress(){
-	char c = editor_read_key();
+	int c = editor_read_key();
 	switch (c) {
-	case CTRL_KEY('q'):
-		write(STDOUT_FILENO, "\x1b[2J", 4);
-		write(STDOUT_FILENO, "\x1b[H", 3);
-		exit(0);
-		break;
-	case 'h':
-	case 'j':
-	case 'k':
-	case 'l':
-		editor_move_cursor(c);
-		break;
+		case CTRL_KEY('q'):
+			write(STDOUT_FILENO, "\x1b[2J", 4);
+			write(STDOUT_FILENO, "\x1b[H", 3);
+			exit(0);
+			break;
+
+		case HOME_KEY:
+			e.cursorX = 0;
+			break;
+		case END_KEY:
+			e.cursorX = e.cols - 1;
+			break;
+		case KEY_LEFT:
+		case KEY_RIGHT:
+		case KEY_UP:
+		case KEY_DOWN:
+			editor_move_cursor(c);
+			break;
+		case PAGE_UP:
+		case PAGE_DOWN:
+		{
+			int down = e.rows;
+			while(down--)
+				editor_move_cursor(c == PAGE_UP ? KEY_UP : KEY_DOWN);
+			break;
+		}
 	}
 }
 
