@@ -10,7 +10,10 @@
 #define VERSION "0.1"
 
 #define CTRL_KEY(key) (key & 0x1f)
+
 struct editor_config {
+	int cursorX;
+	int cursorY;
 	int rows;
 	int cols;
 	struct termios term;
@@ -123,8 +126,11 @@ void editor_refresh_screen() {
 	//draw the tildes
 	editor_draw_tildes(&b);
 
-	//position cursor at top left + 1 col
-	buffer_append(&b, "\x1b[1;2f", 6);
+	//position cursor at top left
+	char buf[32];
+	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", e.cursorY + 1, e.cursorX + 1);
+	buffer_append(&b, buf, strlen(buf));
+
 	//show the cursor again
 	buffer_append(&b, "\x1b[?25h", 6);
 
@@ -142,6 +148,24 @@ char editor_read_key() {
 	return c;
 }
 
+void editor_move_cursor(char key) {
+	switch (key)
+	{
+	case 'h': 
+		e.cursorX--;
+		break;
+	case 'l': 
+		e.cursorX++;
+		break;
+	case 'j': 
+		e.cursorY++;
+		break;
+	case 'k': 
+		e.cursorY--;
+		break;
+	}
+}
+
 void editor_process_keypress(){
 	char c = editor_read_key();
 	switch (c) {
@@ -149,6 +173,12 @@ void editor_process_keypress(){
 		write(STDOUT_FILENO, "\x1b[2J", 4);
 		write(STDOUT_FILENO, "\x1b[H", 3);
 		exit(0);
+		break;
+	case 'h':
+	case 'j':
+	case 'k':
+	case 'l':
+		editor_move_cursor(c);
 		break;
 	}
 }
@@ -185,7 +215,10 @@ int get_window_size(int *rows, int *cols){
 	}
 }
 
+
+
 void init_editor() {
+	e.cursorX = 0, e.cursorY = 0;
 	if (get_window_size(&e.rows, &e.cols) == -1) {
 		die("init_editor()");
 	}
