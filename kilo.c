@@ -7,6 +7,8 @@
 #include<sys/ioctl.h>
 #include<string.h>
 
+#define VERSION "0.1"
+
 #define CTRL_KEY(key) (key & 0x1f)
 struct editor_config {
 	int rows;
@@ -84,7 +86,26 @@ void enable_raw_mode()
 
 void editor_draw_tildes(buffer *b) {
 	for (int i = 0; i<e.rows; i++) {
+		if (i == e.rows / 3) {
+			char welcome[32];
+			int len = snprintf(welcome, sizeof(welcome), 
+						"RePico Version - %s", VERSION);
+			if (len > e.cols) {
+				len = e.cols;
+			}
+			int padding = (e.cols - len)/2;
+			if (padding) {
+				buffer_append(b, "~", 1);
+				padding--;
+			}
+			//insert spaces to center welcome message
+			while(padding--) buffer_append(b, " ", 1);
+
+			buffer_append(b, welcome, len);
+		}
 		buffer_append(b, "~", 1);
+		//clear the line
+		buffer_append(b, "\x1b[K", 4);
 		if (i < e.rows -1)
 			buffer_append(b, "\r\n", 2);
 	}
@@ -92,12 +113,20 @@ void editor_draw_tildes(buffer *b) {
 
 void editor_refresh_screen() {
 	buffer b = BUF_INIT;
-	buffer_append(&b, "\x1b[2J", 4);
+	//hide the cursor
+	buffer_append(&b, "\x1b[?25l", 6);
+	//clear screen
+	// buffer_append(&b, "\x1b[2J", 4);
+	//go to top left
 	buffer_append(&b, "\x1b[H", 3);
 
+	//draw the tildes
 	editor_draw_tildes(&b);
 
+	//position cursor at top left + 1 col
 	buffer_append(&b, "\x1b[1;2f", 6);
+	//show the cursor again
+	buffer_append(&b, "\x1b[?25h", 6);
 
 	write(STDOUT_FILENO, b.buf, b.len);
 	buffer_free(&b);
