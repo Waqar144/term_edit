@@ -1,3 +1,7 @@
+#define _GNU_SOURCE
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+
 #include<stdlib.h>
 #include<stdio.h>
 #include<ctype.h>
@@ -5,6 +9,7 @@
 #include<termios.h>
 #include<errno.h>
 #include<sys/ioctl.h>
+#include<sys/types.h>
 #include<string.h>
 
 #define VERSION "0.1"
@@ -16,19 +21,29 @@ enum KEYS {
 	KEY_DOWN, 
 	KEY_LEFT,
 	KEY_RIGHT,
+	DEL_KEY,
 	PAGE_UP,
 	PAGE_DOWN,
 	HOME_KEY,
 	END_KEY
 };
 
+typedef struct editor_row {
+	int size;
+	char *chars;
+}editor_row;
+
 struct editor_config {
 	int cursorX;
 	int cursorY;
 	int rows;
 	int cols;
+	int numrows;
+	editor_row *erow;
 	struct termios term;
 };
+
+
 
 /**
  * Buffer
@@ -95,29 +110,65 @@ void enable_raw_mode()
 	}
 }
 
+void editor_append_row(char *row, size_t len) {
+	e.erow = realloc(e.erow, sizeof(editor_row) * (e.numrows+1));
+
+	int at = e.numrows;
+	e.erow[at].size = len;
+	e.erow[at].chars = malloc(len + 1);
+	memcpy(e.erow[at].chars, row, len);
+	e.erow[at].chars[len] = '\0';
+	e.numrows++;
+}
+
+void editor_open(char *filename) {
+	FILE *fp = fopen(filename, "r");
+	if (!fp) die("Fail to open");
+
+	char *line = NULL; 
+	size_t linecap = 0;
+	ssize_t linelen;
+	
+	while ((linelen = getline(&line, &linecap, fp)) != -1) {
+		while (linelen > 0 && (line[linelen - 1] == '\n' || 
+							   line[linelen - 1] == '\r')) {
+			linelen--;
+		}
+		editor_append_row(line, linelen);
+	}
+	free(line);
+	fclose(fp);
+}
 
 
 
 void editor_draw_tildes(buffer *b) {
 	for (int i = 0; i<e.rows; i++) {
-		if (i == e.rows / 3) {
-			char welcome[32];
-			int len = snprintf(welcome, sizeof(welcome), 
-						"RePico Version - %s", VERSION);
-			if (len > e.cols) {
-				len = e.cols;
-			}
-			int padding = (e.cols - len)/2;
-			if (padding) {
-				buffer_append(b, "~", 1);
-				padding--;
-			}
-			//insert spaces to center welcome message
-			while(padding--) buffer_append(b, " ", 1);
+		if (i >= e.numrows) {
+			if (e.numrows == 0 && i == e.rows / 3) {
+				char welcome[32];
+				int len = snprintf(welcome, sizeof(welcome), 
+							"RePico Version - %s", VERSION);
+				if (len > e.cols) {
+					len = e.cols;
+				}
+				int padding = (e.cols - len)/2;
+				if (padding) {
+					buffer_append(b, "~", 1);
+					padding--;
+				}
+				//insert spaces to center welcome message
+				while(padding--) buffer_append(b, " ", 1);
 
-			buffer_append(b, welcome, len);
+				buffer_append(b, welcome, len);
+			} else {
+				buffer_append(b, "~", 1);
+			}
+		} else {
+			int len = e.erow[i].size;
+			if (len > e.cols) len = e.cols;
+			buffer_append(b, e.erow[i].chars, len);
 		}
-		buffer_append(b, "~", 1);
 		//clear the line
 		buffer_append(b, "\x1b[K", 4);
 		if (i < e.rows -1)
@@ -168,6 +219,7 @@ int editor_read_key() {
 				if (seq[2] == '~') {
 					switch(seq[1]) {
 						case '1': return HOME_KEY;
+						case '3': return DEL_KEY;
 						case '4': return END_KEY;
 						case '5': return PAGE_UP;
 						case '6': return PAGE_DOWN;
@@ -282,16 +334,22 @@ int get_window_size(int *rows, int *cols){
 
 
 void init_editor() {
-	e.cursorX = 0, e.cursorY = 0;
+	e.cursorX = 0;
+	e.cursorY = 0;
+	e.numrows = 0;
+	e.erow = NULL;
 	if (get_window_size(&e.rows, &e.cols) == -1) {
 		die("init_editor()");
 	}
 }
 
-int main()
+int main(int argc, char *argv[])
 {
 	enable_raw_mode();
 	init_editor();
+	if (argc >= 2) {
+		editor_open(argv[1]);
+	}
 	while(1) {
 		editor_refresh_screen();
 		editor_process_keypress();
