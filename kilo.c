@@ -37,6 +37,8 @@ struct editor_config {
 	int cursorX;
 	int cursorY;
 	int rows;
+	int row_offset;
+	int col_offset;
 	int cols;
 	int numrows;
 	editor_row *erow;
@@ -121,6 +123,21 @@ void editor_append_row(char *row, size_t len) {
 	e.numrows++;
 }
 
+void editor_scroll() {
+	if (e.cursorY < e.row_offset) {
+		e.row_offset = e.cursorY;
+	}
+	if(e.cursorY >= e.row_offset + e.rows){
+		e.row_offset = e.cursorY - e.rows + 1;
+	}
+	if (e.cursorX < e.col_offset) {
+		e.col_offset = e.cursorX;
+	}
+	if (e.cursorX >= e.col_offset + e.cols) {
+		e.col_offset = e.cursorX - e.cols + 1;
+	}
+}
+
 void editor_open(char *filename) {
 	FILE *fp = fopen(filename, "r");
 	if (!fp) die("Fail to open");
@@ -144,7 +161,8 @@ void editor_open(char *filename) {
 
 void editor_draw_tildes(buffer *b) {
 	for (int i = 0; i<e.rows; i++) {
-		if (i >= e.numrows) {
+		int filerow = i + e.row_offset;
+		if (filerow >= e.numrows) {
 			if (e.numrows == 0 && i == e.rows / 3) {
 				char welcome[32];
 				int len = snprintf(welcome, sizeof(welcome), 
@@ -165,9 +183,10 @@ void editor_draw_tildes(buffer *b) {
 				buffer_append(b, "~", 1);
 			}
 		} else {
-			int len = e.erow[i].size;
+			int len = e.erow[filerow].size - e.col_offset;
+			if (len < 0) len = 0;
 			if (len > e.cols) len = e.cols;
-			buffer_append(b, e.erow[i].chars, len);
+			buffer_append(b, &e.erow[filerow].chars[e.col_offset], len);
 		}
 		//clear the line
 		buffer_append(b, "\x1b[K", 4);
@@ -177,6 +196,8 @@ void editor_draw_tildes(buffer *b) {
 }
 
 void editor_refresh_screen() {
+	editor_scroll();
+
 	buffer b = BUF_INIT;
 	//hide the cursor
 	buffer_append(&b, "\x1b[?25l", 6);
@@ -190,7 +211,7 @@ void editor_refresh_screen() {
 
 	//position cursor at top left
 	char buf[32];
-	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", e.cursorY + 1, e.cursorX + 1);
+	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (e.cursorY - e.row_offset)+ 1, (e.cursorX-e.col_offset) + 1);
 	buffer_append(&b, buf, strlen(buf));
 
 	//show the cursor again
@@ -256,10 +277,11 @@ void editor_move_cursor(int key) {
 		if (e.cursorX != 0) e.cursorX--;
 		break;
 	case KEY_RIGHT: 
-		if (e.cursorX != (e.cols - 1)) e.cursorX++;
+		e.cursorX++;
 		break;
 	case KEY_DOWN: 
-		if(e.cursorY != (e.rows - 1)) e.cursorY++;
+		if(e.cursorY < e.numrows)
+			e.cursorY++;
 		break;
 	case KEY_UP: 
 		if(e.cursorY != 0) e.cursorY--;
@@ -337,6 +359,8 @@ void init_editor() {
 	e.cursorX = 0;
 	e.cursorY = 0;
 	e.numrows = 0;
+	e.row_offset = 0;
+	e.col_offset = 0;
 	e.erow = NULL;
 	if (get_window_size(&e.rows, &e.cols) == -1) {
 		die("init_editor()");
