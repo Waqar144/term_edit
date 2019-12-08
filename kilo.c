@@ -39,6 +39,7 @@ typedef struct editor_row {
 struct editor_config {
 	int cursorX;
 	int cursorY;
+	int rx;
 	int rows;
 	int row_offset;
 	int col_offset;
@@ -115,6 +116,17 @@ void enable_raw_mode()
 	}
 }
 
+int editor_row_cx_to_rx(editor_row *row, int cx) {
+	int rx = 0;
+	int j;
+	for (j = 0; j < cx; j++) {
+		if (row->chars[j] == '\t')
+			rx += (TAB_STOP - 1) - (rx % TAB_STOP);
+		rx++;
+	}
+	return rx;
+}
+
 void editor_update_row (editor_row *r) {
 	int tabs = 0;
 	int j;
@@ -156,17 +168,22 @@ void editor_append_row(char *row, size_t len) {
 }
 
 void editor_scroll() {
+	e.rx = 0;
+	if (e.cursorY < e.numrows) {
+		e.rx = editor_row_cx_to_rx(&e.erow[e.cursorY], e.cursorX);
+	}
+
 	if (e.cursorY < e.row_offset) {
 		e.row_offset = e.cursorY;
 	}
 	if(e.cursorY >= e.row_offset + e.rows){
 		e.row_offset = e.cursorY - e.rows + 1;
 	}
-	if (e.cursorX < e.col_offset) {
-		e.col_offset = e.cursorX;
+	if (e.rx < e.col_offset) {
+		e.col_offset = e.rx;
 	}
-	if (e.cursorX >= e.col_offset + e.cols) {
-		e.col_offset = e.cursorX - e.cols + 1;
+	if (e.rx >= e.col_offset + e.cols) {
+		e.col_offset = e.rx - e.cols + 1;
 	}
 }
 
@@ -243,7 +260,7 @@ void editor_refresh_screen() {
 
 	//position cursor at top left
 	char buf[32];
-	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (e.cursorY - e.row_offset)+ 1, (e.cursorX-e.col_offset) + 1);
+	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (e.cursorY - e.row_offset)+ 1, (e.rx-e.col_offset) + 1);
 	buffer_append(&b, buf, strlen(buf));
 
 	//show the cursor again
@@ -303,7 +320,7 @@ int editor_read_key() {
 }
 
 void editor_move_cursor(int key) {
-	editor_row *row = (e.cursorX >= e.numrows) ? NULL : &e.erow[e.cursorY];
+	editor_row *row = (e.cursorY >= e.numrows) ? NULL : &e.erow[e.cursorY];
 	switch (key)
 	{
 	case KEY_LEFT: 
@@ -351,7 +368,9 @@ void editor_process_keypress(){
 			e.cursorX = 0;
 			break;
 		case END_KEY:
-			e.cursorX = e.cols - 1;
+			if (e.cursorY < e.numrows) {
+				e.cursorX = e.erow[e.cursorY].size;
+			}
 			break;
 		case KEY_LEFT:
 		case KEY_RIGHT:
@@ -362,8 +381,16 @@ void editor_process_keypress(){
 		case PAGE_UP:
 		case PAGE_DOWN:
 		{
-			int down = e.rows;
-			while(down--)
+			if (c == PAGE_UP) {
+				e.cursorY = e.row_offset;
+			} else if (c == PAGE_DOWN) {
+				e.cursorY = e.row_offset + e.rows - 1;
+				if (e.cursorY > e.numrows) {
+					e.cursorY = e.numrows;
+				}
+			}
+			int times = e.rows;
+			while(times--)
 				editor_move_cursor(c == PAGE_UP ? KEY_UP : KEY_DOWN);
 			break;
 		}
@@ -410,6 +437,7 @@ void init_editor() {
 	e.numrows = 0;
 	e.row_offset = 0;
 	e.col_offset = 0;
+	e.rx = 0;
 	e.erow = NULL;
 	if (get_window_size(&e.rows, &e.cols) == -1) {
 		die("init_editor()");
