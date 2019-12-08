@@ -11,6 +11,8 @@
 #include<sys/ioctl.h>
 #include<sys/types.h>
 #include<string.h>
+#include<time.h>
+#include<stdarg.h>
 
 #define VERSION "0.1"
 #define TAB_STOP 4
@@ -46,6 +48,9 @@ struct editor_config {
 	int cols;
 	int numrows;
 	editor_row *erow;
+	char *filename;
+	char statusmsg[80];
+	time_t statusmsg_time;
 	struct termios term;
 };
 
@@ -188,6 +193,11 @@ void editor_scroll() {
 }
 
 void editor_open(char *filename) {
+	if (filename) {
+		free(e.filename);
+	}
+	e.filename = strdup(filename);
+
 	FILE *fp = fopen(filename, "r");
 	if (!fp) die("Fail to open");
 
@@ -239,9 +249,47 @@ void editor_draw_tildes(buffer *b) {
 		}
 		//clear the line
 		buffer_append(b, "\x1b[K", 4);
-		if (i < e.rows -1)
 			buffer_append(b, "\r\n", 2);
 	}
+}
+
+void editor_draw_statusbar(buffer *b) {
+	buffer_append(b, "\x1b[7m", 4);
+	char status[80], rstatus[80];
+	int len = snprintf(status, sizeof(status), "%.20s - %d lines",
+		e.filename ? e.filename : "[No name]", e.numrows);
+	int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d", e.cursorY + 1, e.numrows);
+	if (len > e.cols)
+		len = e.cols;
+	buffer_append(b, status, len);
+	while (len < e.cols) {
+		if (e.cols - len == rlen) {
+			buffer_append(b, rstatus, rlen);
+			break;
+		} else {
+			buffer_append(b, " ", 1);
+			len++;
+		}
+	}
+	buffer_append(b, "\x1b[m", 3);
+	buffer_append(b, "\r\n", 2);
+}
+
+void editor_set_status_msg(const char *fmt, ...) {
+	va_list ap;
+	va_start(ap, fmt);
+	vsnprintf(e.statusmsg, sizeof(e.statusmsg), fmt, ap);
+	va_end(ap);
+	e.statusmsg_time = time(NULL);
+}
+
+void editor_draw_message_bar(buffer *b) {
+	buffer_append(b, "\x1b[K", 3);
+	int msglen = strlen(e.statusmsg);
+	if (msglen > e.cols)
+		msglen = e.cols;
+	if (msglen && time(NULL) - e.statusmsg_time < 5)
+		buffer_append(b, e.statusmsg, msglen);
 }
 
 void editor_refresh_screen() {
@@ -257,6 +305,12 @@ void editor_refresh_screen() {
 
 	//draw the tildes
 	editor_draw_tildes(&b);
+
+	//draw the statusbar
+	editor_draw_statusbar(&b);
+
+	//draw the messagebar
+	editor_draw_message_bar(&b);
 
 	//position cursor at top left
 	char buf[32];
@@ -439,9 +493,13 @@ void init_editor() {
 	e.col_offset = 0;
 	e.rx = 0;
 	e.erow = NULL;
+	e.filename = NULL;
+	e.statusmsg[0] = '\0';
+	e.statusmsg_time = 0;
 	if (get_window_size(&e.rows, &e.cols) == -1) {
 		die("init_editor()");
 	}
+	e.rows -= 2;
 }
 
 int main(int argc, char *argv[])
@@ -451,6 +509,8 @@ int main(int argc, char *argv[])
 	if (argc >= 2) {
 		editor_open(argv[1]);
 	}
+
+	editor_set_status_msg("HELP: CTRL + Q to quit");
 	while(1) {
 		editor_refresh_screen();
 		editor_process_keypress();
