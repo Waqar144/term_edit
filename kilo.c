@@ -13,6 +13,7 @@
 #include<string.h>
 
 #define VERSION "0.1"
+#define TAB_STOP 4
 
 #define CTRL_KEY(key) (key & 0x1f)
 
@@ -30,7 +31,9 @@ enum KEYS {
 
 typedef struct editor_row {
 	int size;
+	int r_size;
 	char *chars;
+	char *render;
 }editor_row;
 
 struct editor_config {
@@ -57,7 +60,7 @@ typedef struct buffer {
 #define BUF_INIT {NULL, 0}
 
 void buffer_append(buffer *s, const char *b, int len) {
-	char *new = realloc(s->buf, s->len + len);
+char *new = realloc(s->buf, s->len + len);
 
 	if (new == NULL) return;
 
@@ -112,6 +115,30 @@ void enable_raw_mode()
 	}
 }
 
+void editor_update_row (editor_row *r) {
+	int tabs = 0;
+	int j;
+	for (j = 0; j < r->size; j++) {
+		if (r->chars[j] == '\t')
+			tabs++;
+	}
+	free(r->render);
+	r->render = malloc(r->size + tabs * (TAB_STOP - 1)  + 1);
+
+	int idx = 0;
+	for (j = 0; j < r->size; j++) {
+		if (r->chars[j] == '\t') {
+			r->render[idx++] = ' ';
+			while (idx % TAB_STOP != 0) r->render[idx++] = ' ';
+		} else {
+			r->render[idx++] = r->chars[j];
+		}
+	}
+
+	r->render[idx] = '\0';
+	r->r_size = idx;
+}
+
 void editor_append_row(char *row, size_t len) {
 	e.erow = realloc(e.erow, sizeof(editor_row) * (e.numrows+1));
 
@@ -120,6 +147,11 @@ void editor_append_row(char *row, size_t len) {
 	e.erow[at].chars = malloc(len + 1);
 	memcpy(e.erow[at].chars, row, len);
 	e.erow[at].chars[len] = '\0';
+
+	e.erow[at].r_size = 0;
+	e.erow[at].render = NULL;
+	editor_update_row(&e.erow[at]);
+
 	e.numrows++;
 }
 
@@ -183,10 +215,10 @@ void editor_draw_tildes(buffer *b) {
 				buffer_append(b, "~", 1);
 			}
 		} else {
-			int len = e.erow[filerow].size - e.col_offset;
+			int len = e.erow[filerow].r_size - e.col_offset;
 			if (len < 0) len = 0;
 			if (len > e.cols) len = e.cols;
-			buffer_append(b, &e.erow[filerow].chars[e.col_offset], len);
+			buffer_append(b, &e.erow[filerow].render[e.col_offset], len);
 		}
 		//clear the line
 		buffer_append(b, "\x1b[K", 4);
@@ -271,13 +303,24 @@ int editor_read_key() {
 }
 
 void editor_move_cursor(int key) {
+	editor_row *row = (e.cursorX >= e.numrows) ? NULL : &e.erow[e.cursorY];
 	switch (key)
 	{
 	case KEY_LEFT: 
-		if (e.cursorX != 0) e.cursorX--;
+		if (e.cursorX != 0) {
+			e.cursorX--;
+		} else if (e.cursorY > 0) {
+			e.cursorY--;
+			e.cursorX = e.erow[e.cursorY].size;
+		}
 		break;
 	case KEY_RIGHT: 
-		e.cursorX++;
+		if (row && e.cursorX < row->size) {
+			e.cursorX++;
+		} else if (row && e.cursorX == row->size) {
+			e.cursorY++;
+			e.cursorX = 0;
+		}
 		break;
 	case KEY_DOWN: 
 		if(e.cursorY < e.numrows)
@@ -286,6 +329,12 @@ void editor_move_cursor(int key) {
 	case KEY_UP: 
 		if(e.cursorY != 0) e.cursorY--;
 		break;
+	}
+
+	row = (e.cursorY >= e.numrows) ? NULL : &e.erow[e.cursorY];
+	int rowlen = row ? row->size : 0;
+	if (e.cursorX > rowlen) {
+		e.cursorX = rowlen;
 	}
 }
 
@@ -323,7 +372,7 @@ void editor_process_keypress(){
 
 int get_cursor_position(int *rows, int *cols) {
 	char buf[32];
-	unsigned int i = 0;
+unsigned int i = 0;
 	if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4) return -1;
 	
 	size_t bufsize = sizeof(buf) - 1;
