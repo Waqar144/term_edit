@@ -13,6 +13,7 @@
 #include<string.h>
 #include<time.h>
 #include<stdarg.h>
+#include<fcntl.h>
 
 #define VERSION "0.1"
 #define TAB_STOP 4
@@ -28,7 +29,8 @@ enum KEYS {
 	PAGE_UP,
 	PAGE_DOWN,
 	HOME_KEY,
-	END_KEY
+	END_KEY,
+	BACKSPACE = 127
 };
 
 typedef struct editor_row {
@@ -209,6 +211,25 @@ void editor_scroll() {
 	}
 }
 
+char* editor_rows_to_string(int *buflen) {
+	int tot_len = 0;
+	int j;
+	for (j = 0; j < e.numrows; j++) {
+		tot_len += e.erow[j].size + 1;
+	}
+	*buflen = tot_len;
+	char *buf = malloc(tot_len);
+	char *p = buf;
+	for (j = 0; j < e.numrows; j++) {
+		memcpy(p, e.erow[j].chars, e.erow[j].size);
+		p += e.erow[j].size;
+		*p += '\n';
+		p++;
+	}
+
+	return buf;
+}
+
 void editor_open(char *filename) {
 	if (filename) {
 		free(e.filename);
@@ -233,7 +254,18 @@ void editor_open(char *filename) {
 	fclose(fp);
 }
 
+void editor_save() {
+	if (e.filename == NULL) return;
 
+	int len;
+	char *buf = editor_rows_to_string(&len);
+
+	int fd = open(e.filename, O_RDWR | O_CREAT, 0644);
+	ftruncate(fd, len);
+	write(fd, buf, len);
+	close(fd);
+	free(buf);
+}
 
 void editor_draw_tildes(buffer *b) {
 	for (int i = 0; i<e.rows; i++) {
@@ -429,12 +461,16 @@ void editor_move_cursor(int key) {
 void editor_process_keypress(){
 	int c = editor_read_key();
 	switch (c) {
+		case '\r':
+			break;
 		case CTRL_KEY('q'):
 			write(STDOUT_FILENO, "\x1b[2J", 4);
 			write(STDOUT_FILENO, "\x1b[H", 3);
 			exit(0);
 			break;
-
+		case CTRL_KEY('s'):
+			editor_save();
+			break;
 		case HOME_KEY:
 			e.cursorX = 0;
 			break;
@@ -465,6 +501,13 @@ void editor_process_keypress(){
 				editor_move_cursor(c == PAGE_UP ? KEY_UP : KEY_DOWN);
 			break;
 		}
+		case DEL_KEY:
+		case BACKSPACE:
+		case CTRL_KEY('h'):
+			break;
+		case CTRL_KEY('l'):
+		case '\x1b':
+			break;
 		default:
 			editor_insert_char(c);
 			break;
