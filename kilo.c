@@ -13,10 +13,12 @@
 #include<string.h>
 #include<time.h>
 #include<stdarg.h>
+#include<error.h>
 #include<fcntl.h>
 
 #define VERSION "0.1"
 #define TAB_STOP 4
+#define QUIT_TIMES 3
 
 #define CTRL_KEY(key) (key & 0x1f)
 
@@ -49,6 +51,7 @@ struct editor_config {
 	int col_offset;
 	int cols;
 	int numrows;
+	int dirty;
 	editor_row *erow;
 	char *filename;
 	char statusmsg[80];
@@ -66,6 +69,8 @@ typedef struct buffer {
 	int len;
 }buffer;
 #define BUF_INIT {NULL, 0}
+
+void editor_set_status_msg(const char *msg, ... );
 
 void buffer_append(buffer *s, const char *b, int len) {
 char *new = realloc(s->buf, s->len + len);
@@ -172,6 +177,7 @@ void editor_append_row(char *row, size_t len) {
 	editor_update_row(&e.erow[at]);
 
 	e.numrows++;
+	e.dirty++;
 }
 
 void editor_insert_row_char(editor_row *row, int at, int c) {
@@ -181,6 +187,7 @@ void editor_insert_row_char(editor_row *row, int at, int c) {
 	row->size ++;
 	row->chars[at] = c;
 	editor_update_row(row);
+	e.dirty++;
 }
 
 void editor_insert_char(int c) {
@@ -252,6 +259,7 @@ void editor_open(char *filename) {
 	}
 	free(line);
 	fclose(fp);
+	e.dirty = 0;
 }
 
 void editor_save() {
@@ -261,10 +269,20 @@ void editor_save() {
 	char *buf = editor_rows_to_string(&len);
 
 	int fd = open(e.filename, O_RDWR | O_CREAT, 0644);
-	ftruncate(fd, len);
-	write(fd, buf, len);
-	close(fd);
+	if (fd != -1) {
+		if (ftruncate(fd, len) != -1) {
+			if (write(fd, buf, len) == len) {
+				close(fd);
+				free(buf);
+				editor_set_status_msg("%d bytes written to disk", len);
+				e.dirty = 0;
+				return;
+			}
+		}
+		close(fd);
+	}
 	free(buf);
+	editor_set_status_msg("Can't save! I/O error %s", strerror(errno));
 }
 
 void editor_draw_tildes(buffer *b) {
@@ -305,8 +323,9 @@ void editor_draw_tildes(buffer *b) {
 void editor_draw_statusbar(buffer *b) {
 	buffer_append(b, "\x1b[7m", 4);
 	char status[80], rstatus[80];
-	int len = snprintf(status, sizeof(status), "%.20s - %d lines",
-		e.filename ? e.filename : "[No name]", e.numrows);
+	int len = snprintf(status, sizeof(status), "%.20s - %d lines %s",
+		e.filename ? e.filename : "[No name]", e.numrows,
+		e.dirty ? "(modified)" : "");
 	int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d", e.cursorY + 1, e.numrows);
 	if (len > e.cols)
 		len = e.cols;
@@ -459,11 +478,17 @@ void editor_move_cursor(int key) {
 }
 
 void editor_process_keypress(){
+	static int quit_times = QUIT_TIMES;
 	int c = editor_read_key();
 	switch (c) {
 		case '\r':
 			break;
 		case CTRL_KEY('q'):
+			if (e.dirty && quit_times > 0) {
+				editor_set_status_msg("Warning! File has unsaved changes. "
+				"Press Ctrl-Q %d times to quit", quit_times);
+				quit_times--;
+			}
 			write(STDOUT_FILENO, "\x1b[2J", 4);
 			write(STDOUT_FILENO, "\x1b[H", 3);
 			exit(0);
@@ -512,6 +537,8 @@ void editor_process_keypress(){
 			editor_insert_char(c);
 			break;
 	}
+
+	quit_times = QUIT_TIMES;
 }
 
 int get_cursor_position(int *rows, int *cols) {
@@ -559,6 +586,7 @@ void init_editor() {
 	e.filename = NULL;
 	e.statusmsg[0] = '\0';
 	e.statusmsg_time = 0;
+	e.dirty = 0;
 	if (get_window_size(&e.rows, &e.cols) == -1) {
 		die("init_editor()");
 	}
@@ -573,7 +601,7 @@ int main(int argc, char *argv[])
 		editor_open(argv[1]);
 	}
 
-	editor_set_status_msg("HELP: CTRL + Q to quit");
+	editor_set_status_msg("HELP: CTRL-S = save | CTRL-Q to quit");
 	while(1) {
 		editor_refresh_screen();
 		editor_process_keypress();
