@@ -172,6 +172,23 @@ void editor_append_row(char *row, size_t len) {
 	e.numrows++;
 }
 
+void editor_insert_row_char(editor_row *row, int at, int c) {
+	if (at < 0 || at > row->size) at = row->size;
+	row->chars = realloc(row->chars, row->size + 2);
+	memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
+	row->size ++;
+	row->chars[at] = c;
+	editor_update_row(row);
+}
+
+void editor_insert_char(int c) {
+	if (e.cursorY == e.numrows) {
+		editor_append_row("", 0);
+	}
+	editor_insert_row_char(&e.erow[e.cursorY], e.cursorX, c);
+	e.cursorX++;
+}
+
 void editor_scroll() {
 	e.rx = 0;
 	if (e.cursorY < e.numrows) {
@@ -448,6 +465,9 @@ void editor_process_keypress(){
 				editor_move_cursor(c == PAGE_UP ? KEY_UP : KEY_DOWN);
 			break;
 		}
+		default:
+			editor_insert_char(c);
+			break;
 	}
 }
 
